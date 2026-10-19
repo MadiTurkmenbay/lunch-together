@@ -1,0 +1,67 @@
+name: lunch-together
+services:
+  app:
+    build: .
+    image: lunch-together:${RELEASE_TAG:-local}
+    restart: unless-stopped
+    init: true
+    ports:
+      - "${BIND_ADDRESS:-0.0.0.0}:${APP_PORT:-3080}:3000"
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DATABASE_URL: postgresql://lunch:${POSTGRES_PASSWORD:?Run npm run setup first}@db:5432/lunch
+      SUPPLIER_LOGIN: ${SUPPLIER_LOGIN:-supplier}
+      SUPPLIER_PASSWORD_HASH: ${SUPPLIER_PASSWORD_HASH:?Run npm run setup first}
+      APP_ORIGIN: ${APP_ORIGIN:-}
+      TRUST_PROXY: ${TRUST_PROXY:-172.16.80.1/32}
+      TZ: Asia/Almaty
+    depends_on:
+      db:
+        condition: service_healthy
+    mem_limit: 512m
+    cpus: 1.0
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,noexec,nosuid
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: lunch
+      POSTGRES_USER: lunch
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Run npm run setup first}
+      TZ: Asia/Almaty
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lunch -d lunch"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    mem_limit: 512m
+    cpus: 1.0
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
+volumes:
+  postgres_data:
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: ${LUNCH_SUBNET:-172.16.80.0/24}
+          gateway: ${LUNCH_GATEWAY:-172.16.80.1}

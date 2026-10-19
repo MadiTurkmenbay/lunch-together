@@ -1,0 +1,14 @@
+.git
+.openai
+node_modules
+build
+dist
+work
+outputs
+.env
+.env.*
+!.env.example
+backups
+*.log
+README.md
+API-CONTRACT.md
