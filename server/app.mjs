@@ -3,7 +3,8 @@ import helmet from 'helmet';
 import { rateLimit } from 'express-rate-limit';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { transaction, insertMeals } from './db.mjs';
+import { transaction } from './db.mjs';
+import { publishBatch, registerMenuPlanning } from './menu-planning.mjs';
 import { opaqueToken, hashToken, hashPassword, verifyPassword, parseCookies, cookieOptions, checkOrigin } from './security.mjs';
 
 const DAY = 86400000;
@@ -301,22 +302,10 @@ export function createApp({ pool, staticDir, logger = console } = {}) {
   }
   app.post('/api/supplier/batches', supplier, async (req, res) => {
     const input = parse(batchInput, req.body);
-    if (Date.parse(input.orderDeadline) <= Date.now() || Date.parse(input.paymentDeadline) < Date.parse(input.orderDeadline) || Date.parse(input.deliveryAt) <= Date.parse(input.paymentDeadline)) fail(400, 'Укажите будущий приём заявок, затем оплату, затем доставку.', 'INVALID_DEADLINES');
-    const id = randomUUID();
-    await transaction(pool, async (db) => {
-      await db.query('SELECT pg_advisory_xact_lock(780301194)');
-      const newest = await newestBatch(db);
-      if (newest) {
-        const locked = await lockedBatch(db, newest.id);
-        if (locked.status === 'open') fail(409, 'Сначала примите или отмените текущую доставку.', 'ACTIVE_BATCH_EXISTS');
-      }
-      await db.query(`INSERT INTO batches(id,title,order_date,office,delivery_at,order_deadline,payment_deadline,min_participants,min_paid_portions,payment_instructions)
-        VALUES($1,$2,($3::timestamptz AT TIME ZONE 'Asia/Almaty')::date,$4,$3,$5,$6,$7,$8,$9)`,
-      [id, input.title, input.deliveryAt, input.office, input.orderDeadline, input.paymentDeadline, input.minParticipants, input.minPaidPortions, input.paymentInstructions]);
-      await insertMeals(db, id, input.meals.map((meal, index) => ({ ...meal, id: `meal-${index + 1}` })));
-    });
+    const id = await transaction(pool, db => publishBatch(db, input, fail));
     res.status(201).json({ id });
   });
+  registerMenuPlanning(app, { pool, supplier, parse, fail, mealInput, batchInput });
 
   app.use('/api', (_req, res) => { res.status(404).json({ error: 'Маршрут не найден.', code: 'NOT_FOUND' }); });
   if (staticDir) {

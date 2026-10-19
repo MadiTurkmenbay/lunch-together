@@ -38,3 +38,18 @@ All JSON, same origin. Errors `{error: string, code?: string}` with correct 4xx/
 ## Concurrency / operational rules
 
 Serialize order/payment/batch transitions with transaction + batch row lock. Meal prices snapshotted in order_items, all calculations server-side; no trusting client total/name/price. Supplier state mutations unauthorized without session regardless of UI. No demo fillers or scenario selectors in production frontend. Payment is a manual transfer workflow, not payment gateway. Never claim an actual transfer verified automatically. Deadline labels derive from DB timestamps, not old static date. Refetch shared state periodically and on focus.
+
+## Пул блюд и подготовка меню
+
+Все маршруты ниже требуют сессии поставщика и проверки Origin для мутаций. Каталог и черновики принадлежат поставщику; чужие идентификаторы недоступны.
+
+- `GET /api/supplier/dishes` → `{ dishes }`, включая архивные блюда.
+- `POST /api/supplier/dishes` → `201 { id }`. Поля: `name`, `description`, `tag`, `image`, `details`, `price` (целые тенге). Изображения — три доступных фото-примера.
+- `PUT /api/supplier/dishes/:id` — изменить те же поля.
+- `PATCH /api/supplier/dishes/:id` с `{ archived: boolean }` — архивировать или восстановить.
+- `GET /api/supplier/menu-plans` → `{ plans, activeBatch }`; последние 100 меню по дате доставки. `publishedBatchId: null` означает черновик.
+- `GET /api/supplier/menu-plans/:id` → `{ plan }` с `meals` (снимок названия, состава и цены, ссылка `dishId`).
+- `POST /api/supplier/menu-plans` → `201 { id }`; `PUT /api/supplier/menu-plans/:id` → `{ id }`. Поля доставки как у создания сбора, но `meals: [{ dishId, price }]`, от 1 до 12 уникальных блюд. Цена на день задаётся отдельно от базовой цены пула.
+- `POST /api/supplier/menu-plans/:id/publish` с `{}` → `201 { id }`, где `id` — опубликованный сбор.
+
+Черновики доступны во время текущего открытого сбора и не появляются в публичном API. Публикация требует закрыть текущий сбор и указать будущие сроки; выполняется транзакционно, повторная публикация отклоняется. Публикация ручная. Изменение каталога не меняет сохранённые черновики, опубликованные меню и заказы. Архивное блюдо нельзя добавить в новый черновик, но оно остаётся в ранее сохранённом меню. Опубликованное меню редактировать нельзя. Старый `POST /api/supplier/batches` сохранён для совместимости и использует общую блокировку публикации.

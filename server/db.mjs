@@ -70,5 +70,12 @@ export async function seed(pool) {
       [batchId, 'Обеды в офис', date, 'Уточняется организатором', `${date}T12:30:00+05:00`, `${date}T10:30:00+05:00`, `${date}T11:00:00+05:00`, process.env.PAYMENT_INSTRUCTIONS || 'Реквизиты оплаты уточните у поставщика. После перевода нажмите «Я оплатил».']);
       await insertMeals(client, batchId, seedMeals.map((meal) => ({ ...meal, image: `/assets/${meal.image}` })));
     }
+    // Only fill an empty catalog on first setup; archived dishes stay archived on restarts.
+    await client.query(`INSERT INTO dish_catalog(id,supplier_id,name,description,tag,image,details,price)
+      SELECT gen_random_uuid(),s.id,m.name,m.description,m.tag,m.image,m.details,m.price
+      FROM suppliers s CROSS JOIN (
+        SELECT DISTINCT ON (lower(trim(m.name))) m.* FROM meals m JOIN batches b ON b.id=m.batch_id
+        ORDER BY lower(trim(m.name)),b.created_at DESC,b.id DESC,m.position
+      ) m WHERE NOT EXISTS (SELECT 1 FROM dish_catalog d WHERE d.supplier_id=s.id)`);
   });
 }
