@@ -15,3 +15,16 @@ services:
       interval: 2s
       timeout: 3s
       retries: 20
+  minio:
+    image: lunch-together-test-minio:2025-09-07
+    build:
+      context: .
+      dockerfile: docker/minio-test.Dockerfile
+    command: server /data
+    environment:
+      MINIO_ROOT_USER: lunch_test_storage
+      MINIO_ROOT_PASSWORD: disposable_storage_password
+    ports:
+      - "127.0.0.1:55437:9000"
+    tmpfs:
+      - /data

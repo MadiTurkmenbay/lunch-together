@@ -42,7 +42,8 @@ export function checkOrigin(req, res, next) {
   if (!origin || origin !== (allowed || currentOrigin)) {
     return res.status(403).json({ error: 'Запрос должен быть отправлен с сайта приложения.', code: 'INVALID_ORIGIN' });
   }
-  if (['POST', 'PUT', 'PATCH'].includes(req.method) && !req.is('application/json')) {
+  const photoUpload = req.method === 'POST' && req.path === '/supplier/photos' && req.is('multipart/form-data');
+  if (['POST', 'PUT', 'PATCH'].includes(req.method) && !req.is('application/json') && !photoUpload) {
     return res.status(415).json({ error: 'Ожидается JSON.', code: 'JSON_REQUIRED' });
   }
   next();

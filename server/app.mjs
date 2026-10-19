@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { transaction } from './db.mjs';
 import { publishBatch, registerMenuPlanning } from './menu-planning.mjs';
+import { photoPath, registerPhotos } from './photos.mjs';
 import { opaqueToken, hashToken, hashPassword, verifyPassword, parseCookies, cookieOptions, checkOrigin } from './security.mjs';
 
 const DAY = 86400000;
@@ -13,7 +14,7 @@ const guestCookie = 'lt_guest';
 const uuid = z.string().uuid();
 const nonempty = (max) => z.string().trim().min(1).max(max);
 const safeText = (max) => z.string().trim().max(max);
-const image = z.enum(['/assets/chicken.jpg', '/assets/cutlets.jpg', '/assets/veggie.jpg']);
+const image = z.union([z.enum(['/assets/chicken.jpg', '/assets/cutlets.jpg', '/assets/veggie.jpg']), z.string().regex(photoPath)]);
 const mealInput = z.object({ name: nonempty(100), description: safeText(500), tag: safeText(60).default(''), image, details: safeText(100).default(''), price: z.number().int().min(1).max(1000000) }).strict();
 const batchInput = z.object({
   title: nonempty(120), office: nonempty(200), deliveryAt: z.string().datetime({ offset: true }),
@@ -102,12 +103,12 @@ async function publicState(db, guestHash) {
   return { batch: serializeBatch(batch), meals, totals, myOrder: own[0] ?? null };
 }
 
-export function createApp({ pool, staticDir, logger = console } = {}) {
+export function createApp({ pool, staticDir, storage = null, logger = console } = {}) {
   if (!pool) throw new Error('Database pool is required');
   const app = express();
   app.disable('x-powered-by');
   if (process.env.TRUST_PROXY) app.set('trust proxy', /^\d+$/.test(process.env.TRUST_PROXY) ? Number(process.env.TRUST_PROXY) : process.env.TRUST_PROXY);
-  app.use(helmet({ strictTransportSecurity: false, contentSecurityPolicy: { directives: { upgradeInsecureRequests: null, imgSrc: ["'self'", 'data:'], connectSrc: ["'self'"], styleSrc: ["'self'", "'unsafe-inline'"] } } }));
+  app.use(helmet({ strictTransportSecurity: false, contentSecurityPolicy: { directives: { upgradeInsecureRequests: null, imgSrc: ["'self'", 'data:', 'blob:'], connectSrc: ["'self'"], styleSrc: ["'self'", "'unsafe-inline'"] } } }));
   app.use('/api', (req, res, next) => { res.set('Cache-Control', 'no-store'); next(); });
   const limitOptions = { windowMs: 15 * 60 * 1000, standardHeaders: 'draft-8', legacyHeaders: false, message: { error: 'Слишком много запросов. Повторите позже.', code: 'RATE_LIMIT' } };
   const readLimiter = rateLimit({ ...limitOptions, limit: 50000 });
@@ -302,9 +303,10 @@ export function createApp({ pool, staticDir, logger = console } = {}) {
   }
   app.post('/api/supplier/batches', supplier, async (req, res) => {
     const input = parse(batchInput, req.body);
-    const id = await transaction(pool, db => publishBatch(db, input, fail));
+    const id = await transaction(pool, db => publishBatch(db, input, fail, req.supplier.id));
     res.status(201).json({ id });
   });
+  registerPhotos(app, { pool, supplier, fail, storage, logger });
   registerMenuPlanning(app, { pool, supplier, parse, fail, mealInput, batchInput });
 
   app.use('/api', (_req, res) => { res.status(404).json({ error: 'Маршрут не найден.', code: 'NOT_FOUND' }); });
@@ -313,6 +315,7 @@ export function createApp({ pool, staticDir, logger = console } = {}) {
     app.get('/{*path}', (_req, res) => { res.sendFile('index.html', { root: staticDir }); });
   }
   app.use((error, _req, res, _next) => {
+    if (res.headersSent) return;
     if (error instanceof HttpError) return res.status(error.status).json({ error: error.message, code: error.code });
     if (error.type === 'entity.parse.failed') return res.status(400).json({ error: 'Некорректный JSON.', code: 'INVALID_JSON' });
     if (error.type === 'entity.too.large') return res.status(413).json({ error: 'Слишком большой запрос.', code: 'BODY_TOO_LARGE' });
